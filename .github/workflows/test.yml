@@ -58,6 +58,9 @@ jobs:
           popd
           mv go-pluginserver/go-pluginserver $INSTALL_ROOT/go-pluginserver
 
+          NUM_THREADS=$(( $(nproc) * 2 + 1 ))
+          echo "Building with $NUM_THREADS threads..."
+
           kong-ngx-build \
               --work $DOWNLOAD_ROOT \
               --prefix $INSTALL_ROOT \
@@ -65,7 +68,7 @@ jobs:
               --kong-nginx-module $KONG_NGINX_MODULE_BRANCH \
               --luarocks $LUAROCKS \
               --openssl $OPENSSL \
-              -j $(( $(nproc) * 2 + 1 ))
+              -j $NUM_THREADS
 
     - name: Testing Stuff
       run: |
