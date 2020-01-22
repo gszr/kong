@@ -1,0 +1,79 @@
+name: Build & Test
+
+on: push
+
+jobs:
+  build:
+    runs-on: ubuntu-16.04
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v2
+
+    - name: Lookup Cache
+      uses: actions/cache@v1
+      id: cache-deps
+      with:
+        path: ${{ github.workspace }}/cache
+        key: ${{ hashFiles('**/.requirements') }}
+
+    - name: Build Dependencies
+      if: steps.cache-deps.outputs.cache-hit != 'true'
+      run: |
+          ls -l .
+          dep_version() {
+              grep $1 .requirements | sed -e 's/.*=//' | tr -d '\n'
+          }
+
+          OPENRESTY=$(dep_version RESTY_VERSION)
+          LUAROCKS=$(dep_version RESTY_LUAROCKS_VERSION)
+          OPENSSL=$(dep_version RESTY_OPENSSL_VERSION)
+          GO_PLUGINSERVER=$(dep_version KONG_GO_PLUGINSERVER_VERSION)
+
+          DOWNLOAD_ROOT=$GITHUB_WORKSPACE/download-root
+          BUILD_TOOLS_DOWNLOAD=$DOWNLOAD_ROOT/kong-build-tools
+          GO_PLUGINSERVER_DOWNLOAD=$DOWNLOAD_ROOT/go-pluginserver
+
+          INSTALL_ROOT=$GITHUB_WORKSPACE/cache
+          mkdir -p $INSTALL_ROOT
+
+          KONG_NGINX_MODULE_BRANCH=${KONG_NGINX_MODULE_BRANCH:=master}
+
+          # conditional next/master
+          KONG_BUILD_TOOLS_BRANCH=${KONG_BUILD_TOOLS_BRANCH:=master}
+
+          git clone -b $KONG_BUILD_TOOLS_BRANCH \
+            https://github.com/Kong/kong-build-tools.git
+          export PATH=$PWD/kong-build-tools/openresty-build-tools:$PATH
+          echo $PATH
+
+          git clone -b $GO_PLUGINSERVER \
+            https://github.com/Kong/go-pluginserver
+          export PATH=$PWD/go-pluginserver:$PATH
+          echo $PATH
+
+          pushd go-pluginserver
+            go get ./...
+            make
+          popd
+          mv go-pluginserver/go-pluginserver $INSTALL_ROOT/go-pluginserver
+
+          kong-ngx-build \
+              --work $DOWNLOAD_ROOT \
+              --prefix $INSTALL_ROOT \
+              --openresty $OPENRESTY \
+              --kong-nginx-module $KONG_NGINX_MODULE_BRANCH \
+              --luarocks $LUAROCKS \
+              --openssl $OPENSSL \
+              -j $(( $(nproc) * 2 + 1 ))
+
+    - name: Testing Stuff
+      run: |
+        CACHE=$GITHUB_WORKSPACE/cache
+        export PATH=$CACHE/openssl/bin:$CACHE/openresty/nginx/sbin:$CACHE/openresty/bin:$CACHE/luarocks/bin:$PATH
+        export LD_LIBRARY_PATH=/cache/openssl/lib:$LD_LIBRARY_PATH
+        eval `luarocks path`
+        nginx -V
+        resty -V
+        luarocks --version
+        openssl version
