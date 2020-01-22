@@ -2,9 +2,14 @@ name: Build & Test
 
 on: push
 
+env:
+  CACHE: ${{ github.workspace }}/cache
+
 jobs:
   build:
     runs-on: ubuntu-16.04
+    env:
+      LD_LIBRARY_PATH: $CACHE/openssl/lib:$LD_LIBRARY_PATH
 
     steps:
     - name: Checkout Code
@@ -16,6 +21,9 @@ jobs:
       with:
         path: ${{ github.workspace }}/cache
         key: ${{ hashFiles('**/.requirements') }}
+
+    - name: Add to Path
+      run: echo "::add-path::$CACHE/openssl/bin:$CACHE/openresty/nginx/sbin:$CACHE/openresty/bin:$CACHE/luarocks/bin:$PATH"
 
     - name: Build Dependencies
       if: steps.cache-deps.outputs.cache-hit != 'true'
@@ -72,9 +80,6 @@ jobs:
 
     - name: Testing Stuff
       run: |
-        CACHE=$GITHUB_WORKSPACE/cache
-        export PATH=$CACHE/openssl/bin:$CACHE/openresty/nginx/sbin:$CACHE/openresty/bin:$CACHE/luarocks/bin:$PATH
-        export LD_LIBRARY_PATH=/cache/openssl/lib:$LD_LIBRARY_PATH
         eval `luarocks path`
         nginx -V
         resty -V
