@@ -3,10 +3,11 @@ name: Build & Test
 on: push
 
 env:
-  CACHE: ${{ github.workspace }}/cache
+  CACHE: /tmp/cache
 
 jobs:
   build:
+    name: Build Dependencies
     runs-on: ubuntu-16.04
     env:
       LD_LIBRARY_PATH: $CACHE/openssl/lib:$LD_LIBRARY_PATH
@@ -19,16 +20,18 @@ jobs:
       uses: actions/cache@v1
       id: cache-deps
       with:
-        path: ${{ github.workspace }}/cache
+        path: ${{ env.CACHE }}
         key: ${{ hashFiles('**/.requirements') }}
 
     - name: Add to Path
       run: echo "::add-path::$CACHE/openssl/bin:$CACHE/openresty/nginx/sbin:$CACHE/openresty/bin:$CACHE/luarocks/bin:$PATH"
 
-    - name: Build Dependencies
+    - name: Install packages
+      run: sudo apt-get install -y libyaml-dev
+
+    - name: Execute
       if: steps.cache-deps.outputs.cache-hit != 'true'
       run: |
-          ls -l .
           dep_version() {
               grep $1 .requirements | sed -e 's/.*=//' | tr -d '\n'
           }
@@ -42,7 +45,7 @@ jobs:
           BUILD_TOOLS_DOWNLOAD=$DOWNLOAD_ROOT/kong-build-tools
           GO_PLUGINSERVER_DOWNLOAD=$DOWNLOAD_ROOT/go-pluginserver
 
-          INSTALL_ROOT=$GITHUB_WORKSPACE/cache
+          INSTALL_ROOT=$CACHE
           mkdir -p $INSTALL_ROOT
 
           KONG_NGINX_MODULE_BRANCH=${KONG_NGINX_MODULE_BRANCH:=master}
@@ -78,10 +81,181 @@ jobs:
               --openssl $OPENSSL \
               -j $NUM_THREADS
 
-    - name: Testing Stuff
+          make dev
+
+  test:
+    name: Lint & Unit
+    runs-on: ubuntu-16.04
+    needs: build
+
+    env:
+      LD_LIBRARY_PATH: $CACHE/openssl/lib:$LD_LIBRARY_PATH
+      KONG_TEST_PG_DATABASE: kong
+      KONG_TEST_PG_USER: postgres
+
+    services:
+      postgres:
+        image: postgres:10
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: kong
+        ports:
+        - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v2
+
+    - name: Lookup Cache
+      uses: actions/cache@v1
+      id: cache-deps
+      with:
+        path: ${{ env.CACHE }}
+        key: ${{ hashFiles('**/.requirements') }}
+
+    - name: Add to Path
+      run: echo "::add-path::$CACHE/openssl/bin:$CACHE/openresty/nginx/sbin:$CACHE/openresty/bin:$CACHE/luarocks/bin:$PATH"
+
+    # TODO need a better way to install (or cache) this
+    - name: Install packages
+      run: sudo apt-get install -y libyaml-dev
+
+    - name: Execute
       run: |
         eval `luarocks path`
-        nginx -V
-        resty -V
-        luarocks --version
-        openssl version
+        make dev
+        make lint
+        make test
+
+  integration-postgres:
+    name: Integration - Postgres
+    runs-on: ubuntu-16.04
+    needs: build
+
+    env:
+      LD_LIBRARY_PATH: $CACHE/openssl/lib:$LD_LIBRARY_PATH
+      KONG_TEST_PG_DATABASE: kong
+      KONG_TEST_PG_USER: postgres
+
+    services:
+      postgres:
+        image: postgres:10
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: kong
+        ports:
+        - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v2
+
+    - name: Lookup Cache
+      uses: actions/cache@v1
+      id: cache-deps
+      with:
+        path: ${{ env.CACHE }}
+        key: ${{ hashFiles('**/.requirements') }}
+
+    - name: Add to Path
+      run: echo "::add-path::$CACHE/openssl/bin:$CACHE/openresty/nginx/sbin:$CACHE/openresty/bin:$CACHE/luarocks/bin:$PATH"
+
+    # TODO need a better way to install (or cache) this
+    - name: Install packages
+      run: sudo apt-get install -y libyaml-dev
+
+    - name: Execute
+      run: |
+        eval `luarocks path`
+        make dev
+        KONG_TEST_DATABASE=postgres TEST_SUITE=integration .ci/run_tests.sh
+
+  integration-dbless:
+    name: Integration - DB-less
+    runs-on: ubuntu-16.04
+    needs: build
+
+    env:
+      LD_LIBRARY_PATH: $CACHE/openssl/lib:$LD_LIBRARY_PATH
+      KONG_TEST_PG_DATABASE: kong
+      KONG_TEST_PG_USER: postgres
+
+    services:
+      postgres:
+        image: postgres:10
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: kong
+        ports:
+        - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v2
+
+    - name: Lookup Cache
+      uses: actions/cache@v1
+      id: cache-deps
+      with:
+        path: ${{ env.CACHE }}
+        key: ${{ hashFiles('**/.requirements') }}
+
+    - name: Add to Path
+      run: echo "::add-path::$CACHE/openssl/bin:$CACHE/openresty/nginx/sbin:$CACHE/openresty/bin:$CACHE/luarocks/bin:$PATH"
+
+    # TODO need a better way to install (or cache) this
+    - name: Install packages
+      run: sudo apt-get install -y libyaml-dev
+
+    - name: Execute
+      run: |
+        eval `luarocks path`
+        make dev
+        KONG_TEST_DATABASE=off TEST_SUITE=dbless .ci/run_tests.sh
+
+  plugins-postgres:
+    name: Plugins - Postgres
+    runs-on: ubuntu-16.04
+    needs: build
+
+    env:
+      LD_LIBRARY_PATH: $CACHE/openssl/lib:$LD_LIBRARY_PATH
+      KONG_TEST_PG_DATABASE: kong
+      KONG_TEST_PG_USER: postgres
+
+    services:
+      postgres:
+        image: postgres:10
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: kong
+        ports:
+        - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v2
+
+    - name: Lookup Cache
+      uses: actions/cache@v1
+      id: cache-deps
+      with:
+        path: ${{ env.CACHE }}
+        key: ${{ hashFiles('**/.requirements') }}
+
+    - name: Add to Path
+      run: echo "::add-path::$CACHE/openssl/bin:$CACHE/openresty/nginx/sbin:$CACHE/openresty/bin:$CACHE/luarocks/bin:$PATH"
+
+    # TODO need a better way to install (or cache) this
+    - name: Install packages
+      run: sudo apt-get install -y libyaml-dev
+
+    - name: Execute
+      run: |
+        eval `luarocks path`
+        make dev
+        KONG_TEST_DATABASE=postgres TEST_SUITE=plugins .ci/run_tests.sh
